@@ -16,8 +16,8 @@ Example:
 ```
 
 ## Dependencies
-These are needed to run: `jq, ogmrip, tesseract-ocr`
-To install them run: `sudo apt install jq ogmrip tesseract-ocr`
+These are needed to run: `jq, ogmrip, tesseract-ocr, ffmpeg`
+To install them run: `sudo apt install jq ogmrip tesseract-ocr ffmpeg`
 
 ## Installation:
 ```
