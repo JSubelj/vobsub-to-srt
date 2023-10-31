@@ -23,5 +23,6 @@ To install them run: `sudo apt install jq ogmrip tesseract-ocr`
 ```
 git clone https://github.com/JSubelj/vobsub-to-srt.git vobsub-to-srt
 chmod u+x vobsub-to-srt/vobsub-to-srt
-sudo apt update && sudo apt install jq ogmrip tesseract-ocr
+sudo apt update
+sudo apt install jq ogmrip tesseract-ocr
 ```
