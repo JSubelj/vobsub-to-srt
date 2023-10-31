@@ -445,7 +445,6 @@ srt_filename="$filename_temp.srt"
 
 subptools -s -w -t srt -i "$filename_temp.xml" -o "$srt_filename" &>/dev/null
 sed -i 's/\o14//g' "$srt_filename" &>/dev/null
-sed -i 's/-//g' "$srt_filename" &>/dev/null
 sed -i 's/VW/W/g' "$srt_filename" &>/dev/null
 sed -i 's/|/I/g' "$srt_filename" &>/dev/null
 sed -i "s/i'/I'/g" "$srt_filename" &>/dev/null
