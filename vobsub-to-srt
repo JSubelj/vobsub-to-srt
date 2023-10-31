@@ -294,6 +294,7 @@ if [ $# -eq 0 ]; then
     exit -1
 fi
 
+files=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
     -h | --help)
@@ -312,12 +313,32 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     *)
-        # If not an option, treat it as the file path
-        mkv_file="$1"
+        files+=($1)
         shift
         ;;
     esac
 done
+
+if [ ${#files[@]} = 1 ]; then
+    mkv_file=${files[0]};
+else
+    for file in "${files[@]}"; do
+        if [ $all_flag = true ]; then
+            echo "Calling with all flag"
+            "$0" --all "$file"
+        fi
+        if [ ! -z $id ]; then
+            echo "Calling with id flag"
+            "$0" --id $id "$file"
+        fi
+        if [ ! -z $lang ]; then
+            echo "Calling with lang flag"
+            "$0" --lang $lang "$file"
+        fi
+        "$0" "$file"
+    done
+    exit 0
+fi;
 
 # Get the file name without the extension
 filename="${mkv_file%.*}"
