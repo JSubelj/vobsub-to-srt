@@ -1,0 +1,443 @@
+#!/bin/bash
+
+# need jq, ogmrip, tesseract-ocr
+
+# Mostly extracted from: https://github.com/Jocker666z/ffmes/blob/master/ffmes.sh#L2269
+
+# Check if necessary programs are installed
+if ! command -v jq >/dev/null; then
+    echo "jq is not installed. Please install it and try again."
+    exit 1
+fi
+if ! command -v subp2tiff >/dev/null; then
+    echo "ogmrip is not installed. Please install it and try again."
+    exit 1
+fi
+if ! command -v ffmpeg >/dev/null; then
+    echo "ffmpeg is not installed. Please install it and try again."
+    exit 1
+fi
+if ! command -v tesseract >/dev/null; then
+    echo "tesseract is not installed. Please install it and try again."
+    exit 1
+fi
+
+ProgressBar() { # Progress bar
+    # Arguments: ProgressBar "current source file" "number current" "number total" "label" "force mode"
+    # Local variables
+    local loop_pass
+    local sourcefile
+    local TotalFilesNB
+    local CurrentFilesNB
+    local TimeOut
+    local start_TimeOut
+    local interval_TimeOut
+    local interval_calc
+    local TotalDuration
+    local CurrentState
+    local CurrentDuration
+    local Currentfps
+    local Currentbitrate
+    local CurrentSize
+    local Current_Frame
+    local CurrentfpsETA
+    local Current_Remaining
+    local Current_ETA
+    local ProgressTitle
+    local _progress
+    local _done
+    local _done
+    local _left
+    # Arguments
+    sourcefile=$(Display_Line_Progress_Truncate "${1##*/}")
+    CurrentFilesNB="$2"
+    TotalFilesNB="$3"
+    ProgressTitle="$4"
+    if [[ -n "$5" ]]; then
+        ProgressBarOption="$5"
+    else
+        unset ProgressBarOption
+    fi
+    # ffmpeg detailed progress bar
+    if [[ -z "$VERBOSE" && "${#LSTVIDEO[@]}" = "1" && -z "$ProgressBarOption" && "$ffmes_option" -lt "20" ]] ||
+        [[ -z "$VERBOSE" && -n "$RipFileName" && -z "$ProgressBarOption" ]] ||
+        [[ -z "$VERBOSE" && "${#LSTAUDIO[@]}" = "1" && -z "$ProgressBarOption" && "$ffmes_option" -ge "20" ]] ||
+        [[ -z "$VERBOSE" && "${#LSTVIDEO[@]}" -gt "1" && "$NVENC" = "0" && -z "$ProgressBarOption" && "$ffmes_option" -lt "20" ]] ||
+        [[ -z "$VERBOSE" && "${#LSTAUDIO[@]}" -gt "1" && "$NPROC" = "0" && -z "$ProgressBarOption" && "$ffmes_option" -ge "20" ]]; then
+        # Start value of bar
+        _progress="0"
+        _left="40"
+        _left=$(printf "%${_left}s")
+        # Standby "$FFMES_FFMPEG_PROGRESS"
+        # Time out in ms
+        TimeOut="2000"
+        # Start time counter
+        start_TimeOut=$(($(date +%s%N) / 1000000))
+        while [ ! -f "$FFMES_FFMPEG_PROGRESS" ] && [ ! -s "$FFMES_FFMPEG_PROGRESS" ]; do
+            sleep 0.1
+            # Time out counter
+            interval_TimeOut=$(($(date +%s%N) / 1000000))
+            interval_calc=$((interval_TimeOut - start_TimeOut))
+            # Time out fail break
+            if [[ "$interval_calc" -gt "$TimeOut" ]]; then
+                echo -e -n "\r\e[0K ]${_done// /▇}${_left// / }[ ${_progress}% - [!] ffmpeg fail"
+                break
+            fi
+        done
+        # Duration - in second
+        TotalDuration=$(echo "$ffprobe_Duration" | awk -F"." '{ print $1 }')
+        # Title display
+        echo "  [${sourcefile}]"
+        # Progress bar loop
+        # Start time counter
+        TimeOut="30000"
+        start_TimeOut=$(($(date +%s%N) / 1000000))
+        while true; do
+            # Get main value
+            CurrentState=$(tail -n 13 "$FFMES_FFMPEG_PROGRESS" 2>/dev/null |
+                grep "progress" 2>/dev/null | tail -1 | awk -F"=" '{ print $2 }')
+            CurrentDuration=$(tail -n 13 "$FFMES_FFMPEG_PROGRESS" 2>/dev/null |
+                grep "out_time_ms" 2>/dev/null | tail -1 | awk -F"=" '{ print $2 }')
+            CurrentDuration=$((CurrentDuration / 1000000))
+            # Get extra value
+            Currentfps=$(tail -n 13 "$FFMES_FFMPEG_PROGRESS" 2>/dev/null |
+                grep "fps" 2>/dev/null | tail -1 | awk -F"=" '{ print $2 }')
+            Currentbitrate=$(tail -n 13 "$FFMES_FFMPEG_PROGRESS" 2>/dev/null |
+                grep "bitrate" 2>/dev/null | tail -1 |
+                awk -F"=" '{ print $2 }' | awk -F"." '{ print $1 }')
+            CurrentSize=$(tail -n 13 "$FFMES_FFMPEG_PROGRESS" 2>/dev/null |
+                grep "total_size" 2>/dev/null | tail -1 | awk -F"=" '{ print $2 }' |
+                awk '{ foo = $1 / 1024 / 1024 ; print foo }')
+            # ETA - If ffprobe_fps[0] active consider video, if not consider audio
+            if [[ -n "${ffprobe_fps[0]}" ]]; then
+                Current_Frame=$(tail -n 13 "$FFMES_FFMPEG_PROGRESS" 2>/dev/null |
+                    grep "frame=" 2>/dev/null | tail -1 | awk -F"=" '{ print $2 }')
+                if [[ "$Currentfps" = "0.00" ]] || [[ -z "$Currentfps" ]]; then
+                    CurrentfpsETA="0.01"
+                else
+                    CurrentfpsETA="$Currentfps"
+                fi
+                if [[ -z "$Current_Frame" ]]; then
+                    Current_Frame="1"
+                fi
+                # if Current_Frame stuck at 1, consider ETA value is invalid
+                if [[ "$Current_Frame" -eq "1" ]]; then
+                    Current_ETA="ETA: N/A"
+                else
+                    Current_Remaining=$(bc <<<"scale=0; ; ( ($ffprobe_TotalFrames - $Current_Frame) / $CurrentfpsETA)")
+                    Current_ETA="ETA: $((Current_Remaining / 3600))h$((Current_Remaining % 3600 / 60))m$((Current_Remaining % 60))s"
+                fi
+            else
+                Current_ETA=$(tail -n 13 "$FFMES_FFMPEG_PROGRESS" 2>/dev/null |
+                    grep "speed" 2>/dev/null | tail -1 | awk -F"=" '{ print $2 }')
+            fi
+            # Displayed label
+            if [[ -n "${Currentbitrate}" ]]; then
+                ExtendLabel=$(echo "$(Display_Variable_Trick "${Current_ETA}" "7")\
+                            $(Display_Variable_Trick "${Currentfps}" "7" "fps")\
+                            $(Display_Variable_Trick "${Currentbitrate}" "7" "kb/s")\
+                            $(Display_Variable_Trick "${CurrentSize}" "7" "Mb")" |
+                    awk '{$2=$2};1' | awk '{print "  " $0}' | tr '\n' ' ')
+            else
+                # Standby first interval time calculation for prevent (standard_in) 1: syntax error
+                if [[ -n "$interval_calc" ]]; then
+                    Current_ETA="IDLE: $(bc <<<"scale=0; ; ( $interval_calc / 1000)")/$(bc <<<"scale=0; ; ( $TimeOut / 1000)")s"
+                fi
+                ExtendLabel=$(echo "$(Display_Variable_Trick "${Current_ETA}" "7")\
+                            $(Display_Variable_Trick "${Currentfps}" "7" "fps")\
+                            $(Display_Variable_Trick "${Currentbitrate}" "7" "kb/s")\
+                            $(Display_Variable_Trick "${CurrentSize}" "7" "Mb")" |
+                    awk '{$2=$2};1' | awk '{print "  " $0}' | tr '\n' ' ')
+            fi
+            # Display variables
+            # End case
+            if [[ "$CurrentState" = "end" ]]; then
+                _progress="100"
+            # Total duration not available (dts audio)
+            elif [[ -z "$TotalDuration" ]]; then
+                _progress="100"
+            # Common case
+            else
+                _progress=$(((((CurrentDuration * 100) / TotalDuration) * 100) / 100))
+            fi
+            _done=$(((_progress * 4) / 10))
+            _left=$((40 - _done))
+            _done=$(printf "%${_done}s")
+            _left=$(printf "%${_left}s")
+            # Progress bar display
+            if [[ "$_progress" -le "100" ]]; then
+                echo -e -n "\r\e[0K ]${_done// /▇}${_left// / }[ ${_progress}% $ExtendLabel"
+            fi
+            # Pass break condition
+            if [[ "$_progress" = "100" ]]; then
+                # Loop pass
+                loop_pass="1"
+                rm "$FFMES_FFMPEG_PROGRESS" &>/dev/null
+                echo
+                break
+            fi
+            ### Fail break condition
+            # Time out counter
+            interval_TimeOut=$(($(date +%s%N) / 1000000))
+            interval_calc=$((interval_TimeOut - start_TimeOut))
+            # Time out fail break
+            if [[ "$interval_calc" -gt "$TimeOut" && -z "$CurrentSize" ]]; then
+                # Loop fail
+                loop_pass="1"
+                echo -e -n "\r\e[0K ]${_done// /▇}${_left// / }[ ${_progress}% - [!] ffmpeg fail"
+                rm "$FFMES_FFMPEG_PROGRESS" &>/dev/null
+                echo
+                break
+            fi
+            # Other break
+            if [[ ! -f "$FFMES_FFMPEG_PROGRESS" && "$_progress" != "100" && "$CurrentState" != "end" ]]; then
+                # Loop fail
+                loop_pass="1"
+                echo -e -n "\r\e[0K ]${_done// /▇}${_left// / }[ ${_progress}% - [!] ffmpeg fail"
+                rm "$FFMES_FFMPEG_PROGRESS" &>/dev/null
+                echo
+                break
+            fi
+            # Refresh rate
+            sleep 0.3
+        done
+    # Multi. files progress bar
+    elif [[ -z "$VERBOSE" ]] && [[ -z "$loop_pass" ]]; then
+        # Display variables
+        _progress=$(((((CurrentFilesNB * 100) / TotalFilesNB) * 100) / 100))
+        _done=$(((_progress * 4) / 10))
+        _left=$((40 - _done))
+        _done=$(printf "%${_done}s")
+        _left=$(printf "%${_left}s")
+        ExtendLabel=$(echo "$(Display_Variable_Trick "${CurrentFilesNB}/${TotalFilesNB}" "7")\
+                    $(Display_Variable_Trick "${ProgressTitle}" "7")" |
+            awk '{$2=$2};1' | awk '{print "  " $0}' | tr '\n' ' ')
+        # Progress bar display
+        echo -e -n "\r\e[0K ]${_done// /▇}${_left// / }[ ${_progress}% $ExtendLabel"
+        if [[ "$_progress" = "100" ]]; then
+            echo
+        fi
+    fi
+}
+
+Display_Variable_Trick() { # Punctuation trick
+    local variable
+    local display_mode
+    local unit
+    variable="$1"
+    display_mode="$2"
+    unit="$3"
+    if [[ -n "$variable" ]]; then
+        if [[ -n "$unit" ]]; then
+            unit=" $unit"
+        fi
+        # 0 = ",  ,"
+        if [[ "$display_mode" = "0" ]]; then
+            echo ", ${variable}${unit},"
+        # 1 = ","
+        elif [[ "$display_mode" = "1" ]]; then
+            echo "${variable}${unit},"
+        # 2 = "()"
+        elif [[ "$display_mode" = "2" ]]; then
+            echo "(${variable}${unit})"
+        # 3 = "(),"
+        elif [[ "$display_mode" = "3" ]]; then
+            echo "(${variable}${unit}),"
+        # 4 = "( ,"
+        elif [[ "$display_mode" = "4" ]]; then
+            echo "(${variable}${unit},"
+        # 5 = "),"
+        elif [[ "$display_mode" = "5" ]]; then
+            echo "${variable}${unit}),"
+        # 6 = ":"
+        elif [[ "$display_mode" = "6" ]]; then
+            echo "${variable}${unit}):"
+        # 7 = " - "
+        elif [[ "$display_mode" = "7" ]]; then
+            echo " - ${variable}${unit}"
+        else
+            echo "${variable}"
+        fi
+    fi
+}
+
+Display_Line_Progress_Truncate() { # Line width truncate in progress
+    local label
+    label="$*"
+    if [[ "${#label}" -gt "$TERM_WIDTH_PROGRESS_TRUNC" ]]; then
+        echo "$label" | cut -c 1-"$TERM_WIDTH_PROGRESS_TRUNC" | awk '{print $0"..."}'
+    else
+        echo "$label"
+    fi
+}
+
+
+default_lang="eng"
+all_flag=false
+
+show_help() {
+    echo "Usage: $0 [OPTIONS] FILE"
+    echo "  -h, --help        Display this help message"
+    echo "  --id ID           Set the ID of subtitle stream (optional)"
+    echo "  --lang LANG       Set the language (optional, default: $default_lang)"
+    echo "  --all             Use the --all flag extract all vobsubs (takes a long time)"
+    echo
+    echo "Example:"
+    echo "  $0 --id 6 /path/to/file"
+    echo "  $0 --lang eng /path/to/file"
+    echo "  $0 --all /path/to/file"
+    exit 0
+}
+
+if [ $# -eq 0 ]; then
+    show_help
+    exit -1
+fi
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+    -h | --help)
+        show_help
+        ;;
+    --id)
+        id="$2"
+        shift 2
+        ;;
+    --lang)
+        lang="$2"
+        shift 2
+        ;;
+    --all)
+      all_flag=true
+      shift
+      ;;
+    *)
+        # If not an option, treat it as the file path
+        mkv_file="$1"
+        shift
+        ;;
+    esac
+done
+
+# Get the file name without the extension
+filename="${mkv_file%.*}"
+base_filename="$(basename $filename)"
+source_dir="$(dirname $mkv_file)"
+
+# File path for the output SRT file
+srt_file="$filename.srt"
+
+video_stats=$(mkvmerge -J "$mkv_file")
+
+if [ "$all_flag" = true ]; then
+    ids=`echo "$video_stats" | jq '.tracks[] | select(.codec == "VobSub") | .id'`
+    for i in $ids; do
+        if [ ! -z $i ]; then
+            "$0" --id $i "$mkv_file"
+        fi
+    done
+fi
+
+
+if [ -z "$lang" ] && [ -z "$id" ]; then
+    echo
+    echo "Stream id not specified, selecting default lang - $default_lang"
+    echo "Available streams:"
+    echo "$video_stats" | jq '.tracks[] | select(.codec == "VobSub") | {id: "\(.id)", lang: "\(.properties.language)"}'
+    lang="$default_lang"
+    echo
+fi
+
+if [ -z "$id" ]; then
+    first_sub_track=$(echo "$video_stats" | jq ".tracks[] | select(.codec == \"VobSub\" and (.properties.language // \"$lang\") == \"$lang\") | .id" | sort | head -1)
+else
+    first_sub_track="$id"
+fi
+lang=$(echo "$video_stats" | jq ".tracks[] | select(.id==$first_sub_track) | .properties.language // \"$default_lang\"")
+lang="${lang//\"/}"
+
+echo "Selected stream: $first_sub_track; lang: $lang"
+tesslangs=$(tesseract --list-langs)
+if [ -z $(echo "$tesslangs" | grep $lang) ]; then
+    tessdata_path=$(echo "$tesslangs" | awk -F'"' 'NR==1{print $2}')
+    # try to download tessdata
+    echo 
+    echo "Tessdata for lang $lang does not exist."
+    echo "Trying to download tessdata for lang $lang from https://github.com/tesseract-ocr/tessdata/raw/main/$lang.traineddata"
+    if wget https://github.com/tesseract-ocr/tessdata/raw/main/$lang.traineddata -O $tessdata_path$lang.traineddata; then
+        echo "Successfully downloaded tessdata and installed it"
+    else
+        echo
+        echo "Tessdata on github: https://github.com/tesseract-ocr/tessdata/tree/main"
+        echo "Tessdata directory: $tessdata_path (got it with command 'tesseract --list-langs')"
+        echo "Maybe dont have permission to write, try: "
+        echo "    sudo wget https://github.com/tesseract-ocr/tessdata/raw/main/$lang.traineddata -O $tessdata_path$lang.traineddata;"
+        echo
+        exit -1
+    fi
+fi
+
+if [ -z "$first_sub_track" ]; then
+    echo "No VobSub track id '$first_sub_track' found in $mkv_file. Exiting."
+    exit
+fi
+
+workdir=`mktemp -d`
+filename_temp="$workdir/$base_filename.$lang"
+
+
+# Extract the subtitles from the MKV file
+if mkvextract tracks "$mkv_file" "$first_sub_track:$filename_temp.idx"; then
+    echo "Subtitles extracted succesfully"
+else
+    echo "Subtitles weren't extracted"
+    if [[ $mkv_file = *.mp4 ]]; then
+        echo "Trying to convert to mkv (only subs)"
+        new_name="$workdir/$base_filename.only-sub.mkv"
+        ffmpeg -i "$mkv_file" -c:s copy -map 0:$first_sub_track "$new_name" &> /dev/null
+        if mkvextract tracks "$new_name" "0:$filename_temp.idx"; then
+            :
+        else
+            echo "Extracting vobsub failed"
+            exit -1
+        fi
+    fi
+fi
+
+subp2tiff --sid=0 -n "$filename_temp"
+TOTAL=($workdir/*.tif)
+for tfiles in $workdir/*.tif; do
+    (
+        tesseract --oem 1 "$tfiles" "$tfiles" -l "$lang"  &> /dev/null
+    ) &
+    if [[ $(jobs -r -p | wc -l) -gt $NPROC ]]; then
+        wait -n
+    fi
+    # Counter
+    TIFF_NB=$((COUNTER + 1))
+    COUNTER=$TIFF_NB
+    # Progress
+    ProgressBar "" "${COUNTER}" "${#TOTAL[@]}" "tif to text files" "1"
+done
+
+srt_filename="$filename_temp.srt"
+
+subptools -s -w -t srt -i "$filename_temp.xml" -o "$srt_filename" &>/dev/null
+sed -i 's/\o14//g' "$srt_filename" &>/dev/null
+sed -i 's/-//g' "$srt_filename" &>/dev/null
+sed -i 's/VW/W/g' "$srt_filename" &>/dev/null
+sed -i 's/|/I/g' "$srt_filename" &>/dev/null
+sed -i "s/i'/I'/g" "$srt_filename" &>/dev/null
+sed -i 's/Ls/Is/g' "$srt_filename" &>/dev/null
+sed -i 's/Lf/If/g' "$srt_filename" &>/dev/null
+
+base_srt_name="$(basename $srt_filename)"
+cp "$srt_filename" "$source_dir/$base_srt_name"
+
+
+# rm -- *.tif &>/dev/null
+# rm -- *.txt &>/dev/null
+# rm -- *.xml &>/dev/null
+# rm "$filename.idx" &>/dev/null
+# rm "$filename.sub" &>/dev/null
+
